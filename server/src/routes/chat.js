@@ -5,6 +5,7 @@
 import express from 'express';
 import { Agent } from '../agent/Agent.js';
 import { createSSEStream } from '../utils/stream.js';
+import { WebSearchTool } from '../tools/WebSearchTool.js';
 
 const router = express.Router();
 
@@ -16,6 +17,15 @@ const apiConfig = {
 };
 
 const agent = new Agent(apiConfig);
+
+// Register tools
+const searchTool = new WebSearchTool({
+  tavilyKey: process.env.TAVILY_API_KEY,
+  serperKey: process.env.SERPER_API_KEY
+});
+agent.registerTool(searchTool);
+
+console.log('[Agent] WebSearchTool registered with providers: Tavily → Serper → DuckDuckGo');
 
 /**
  * POST /api/chat - Stream chat with agent

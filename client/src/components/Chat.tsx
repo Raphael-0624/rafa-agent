@@ -204,13 +204,6 @@ export const Chat: React.FC = () => {
     handleSubmit({ preventDefault: () => {} } as React.FormEvent, option.value);
   };
 
-  const handleClarifyCustom = () => {
-    if (input.trim()) {
-      handleSubmit({ preventDefault: () => {} } as React.FormEvent, input.trim());
-      setInput('');
-    }
-  };
-
   const handleStop = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
