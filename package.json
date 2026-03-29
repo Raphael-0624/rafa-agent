@@ -1,0 +1,19 @@
+{
+  "name": "agent-assistant",
+  "version": "1.0.0",
+  "description": "AI Agent Assistant with streaming response and markdown rendering",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "cd server && node server.js",
+    "client": "cd client && npm run dev",
+    "build": "cd client && npm run build",
+    "install:all": "npm install && cd server && npm install && cd ../client && npm install"
+  },
+  "keywords": ["ai", "agent", "assistant", "claude", "streaming"],
+  "author": "Raphael",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

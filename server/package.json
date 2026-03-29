@@ -1,0 +1,18 @@
+{
+  "name": "agent-assistant-server",
+  "version": "1.0.0",
+  "description": "Backend proxy server for AI API",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.2.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5"
+  }
+}
