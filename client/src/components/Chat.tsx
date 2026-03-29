@@ -1,10 +1,34 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MarkdownRenderer } from './MarkdownRenderer';
 
+// New types for agent protocol
+interface StatusEvent {
+  type: string;
+  message: string;
+  current?: number;
+  total?: number;
+}
+
+interface ClarifyOption {
+  id: string;
+  label: string;
+  value: string;
+}
+
+interface ClarifyEvent {
+  question: string;
+  options: ClarifyOption[];
+  allowCustomInput: boolean;
+}
+
+type MessageRole = 'user' | 'assistant' | 'status' | 'clarify';
+
 interface Message {
   id: string;
-  role: 'user' | 'assistant';
-  content: string;
+  role: MessageRole;
+  content?: string;
+  status?: StatusEvent;
+  clarify?: ClarifyEvent;
   isStreaming?: boolean;
   timestamp: Date;
 }
@@ -14,6 +38,7 @@ export const Chat: React.FC = () => {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [currentStatus, setCurrentStatus] = useState<StatusEvent | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -27,35 +52,43 @@ export const Chat: React.FC = () => {
 
   const generateId = () => Math.random().toString(36).substring(2, 9);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Parse SSE event line
+  const parseEvent = (line: string): { event: string; data: any } | null => {
+    const eventMatch = line.match(/^event: (\w+)$/);
+    const dataMatch = line.match(/^data: (.+)$/);
+
+    if (eventMatch && dataMatch) {
+      try {
+        return {
+          event: eventMatch[1],
+          data: JSON.parse(dataMatch[1])
+        };
+      } catch {
+        return { event: eventMatch[1], data: dataMatch[1] };
+      }
+    }
+    return null;
+  };
+
+  const handleSubmit = async (e: React.FormEvent, clarifyValue?: string) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    const messageContent = clarifyValue || input.trim();
+    if (!messageContent || isLoading) return;
 
     const userMessage: Message = {
       id: generateId(),
       role: 'user',
-      content: input.trim(),
+      content: messageContent,
       timestamp: new Date(),
     };
 
-    const assistantMessage: Message = {
-      id: generateId(),
-      role: 'assistant',
-      content: '',
-      isStreaming: true,
-      timestamp: new Date(),
-    };
-
-    setMessages(prev => [...prev, userMessage, assistantMessage]);
-    setInput('');
+    setMessages(prev => [...prev, userMessage]);
+    if (!clarifyValue) {
+      setInput('');
+    }
     setIsLoading(true);
     setError(null);
-
-    // 准备请求
-    const history = messages.map(m => ({
-      role: m.role,
-      content: m.content,
-    }));
+    setCurrentStatus(null);
 
     abortControllerRef.current = new AbortController();
 
@@ -66,7 +99,8 @@ export const Chat: React.FC = () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          messages: [...history, { role: 'user', content: userMessage.content }],
+          message: messageContent,
+          sessionId: 'default'
         }),
         signal: abortControllerRef.current.signal,
       });
@@ -79,6 +113,7 @@ export const Chat: React.FC = () => {
       if (!reader) throw new Error('No response body');
 
       const decoder = new TextDecoder();
+      let assistantMessageId: string | null = null;
       let fullContent = '';
 
       while (true) {
@@ -89,61 +124,90 @@ export const Chat: React.FC = () => {
         const lines = chunk.split('\n').filter(line => line.trim() !== '');
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
+          const event = parseEvent(line);
+          if (!event) continue;
 
-            if (data === '[DONE]') continue;
+          switch (event.event) {
+            case 'status':
+              setCurrentStatus(event.data);
+              break;
 
-            try {
-              const parsed = JSON.parse(data);
-
-              if (parsed.error) {
-                setError(parsed.error);
-                continue;
+            case 'content':
+              if (!assistantMessageId) {
+                assistantMessageId = generateId();
+                setMessages(prev => [...prev, {
+                  id: assistantMessageId!,
+                  role: 'assistant',
+                  content: '',
+                  isStreaming: true,
+                  timestamp: new Date(),
+                }]);
               }
-
-              if (parsed.content) {
-                fullContent += parsed.content;
+              if (event.data.content) {
+                fullContent += event.data.content;
                 setMessages(prev =>
                   prev.map(m =>
-                    m.id === assistantMessage.id
+                    m.id === assistantMessageId
                       ? { ...m, content: fullContent }
                       : m
                   )
                 );
               }
-            } catch (e) {
-              // 忽略解析错误
-            }
+              break;
+
+            case 'clarify':
+              setMessages(prev => [...prev, {
+                id: generateId(),
+                role: 'clarify',
+                clarify: event.data,
+                timestamp: new Date(),
+              }]);
+              setIsLoading(false);
+              setCurrentStatus(null);
+              break;
+
+            case 'error':
+              setError(event.data.error || '请求失败');
+              break;
+
+            case 'done':
+              if (assistantMessageId) {
+                setMessages(prev =>
+                  prev.map(m =>
+                    m.id === assistantMessageId
+                      ? { ...m, isStreaming: false }
+                      : m
+                  )
+                );
+              }
+              setIsLoading(false);
+              setCurrentStatus(null);
+              break;
           }
         }
       }
-
-      // 完成流式输出
-      setMessages(prev =>
-        prev.map(m =>
-          m.id === assistantMessage.id
-            ? { ...m, isStreaming: false }
-            : m
-        )
-      );
 
     } catch (err: any) {
       if (err.name === 'AbortError') {
         console.log('Request aborted');
       } else {
         setError(err.message || '请求失败');
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === assistantMessage.id
-              ? { ...m, content: '抱歉，请求出错了。请稍后重试。', isStreaming: false }
-              : m
-          )
-        );
       }
-    } finally {
       setIsLoading(false);
+      setCurrentStatus(null);
+    } finally {
       abortControllerRef.current = null;
+    }
+  };
+
+  const handleClarifySelect = (option: ClarifyOption) => {
+    handleSubmit({ preventDefault: () => {} } as React.FormEvent, option.value);
+  };
+
+  const handleClarifyCustom = () => {
+    if (input.trim()) {
+      handleSubmit({ preventDefault: () => {} } as React.FormEvent, input.trim());
+      setInput('');
     }
   };
 
@@ -156,12 +220,14 @@ export const Chat: React.FC = () => {
         )
       );
       setIsLoading(false);
+      setCurrentStatus(null);
     }
   };
 
   const clearChat = () => {
     setMessages([]);
     setError(null);
+    setCurrentStatus(null);
   };
 
   return (
@@ -170,10 +236,10 @@ export const Chat: React.FC = () => {
       <header className="flex items-center justify-between px-6 py-4 bg-slate-800 border-b border-slate-700">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold text-lg">
-            A
+            R
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-white">Agent Assistant</h1>
+            <h1 className="text-xl font-semibold text-white">Rafa Agent</h1>
             <p className="text-sm text-slate-400">AI 智能助手</p>
           </div>
         </div>
@@ -185,6 +251,21 @@ export const Chat: React.FC = () => {
         </button>
       </header>
 
+      {/* Status Bar */}
+      {currentStatus && (
+        <div className="bg-blue-900/30 border-b border-blue-800 px-4 py-2">
+          <div className="flex items-center gap-2 text-blue-300 text-sm">
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+            <span>{currentStatus.message}</span>
+            {currentStatus.total && (
+              <span className="text-blue-400">
+                ({currentStatus.current}/{currentStatus.total})
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
         {messages.length === 0 && (
@@ -195,7 +276,8 @@ export const Chat: React.FC = () => {
               </svg>
             </div>
             <p className="text-lg">开始一个新对话</p>
-            <p className="text-sm mt-2">输入你的问题，AI 助手会为你解答</p>
+            <p className="text-sm mt-2">输入你的问题，Rafa 会为你解答</p>
+            <p className="text-xs mt-1 text-slate-500">支持 /search 命令进行搜索</p>
           </div>
         )}
 
@@ -206,36 +288,41 @@ export const Chat: React.FC = () => {
               message.role === 'user' ? 'justify-end' : 'justify-start'
             }`}
           >
-            <div
-              className={`max-w-3xl px-4 py-3 rounded-2xl ${
-                message.role === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-slate-800 text-slate-100'
-              }`}
-            >
-              {message.role === 'assistant' ? (
-                <div className="text-left">
-                  <MarkdownRenderer content={message.content} />
-                  {message.isStreaming && <span className="streaming-cursor" />}
+            {message.role === 'clarify' && message.clarify ? (
+              <div className="max-w-3xl px-4 py-3 rounded-2xl bg-slate-800 border border-blue-700">
+                <p className="text-slate-200 mb-3">{message.clarify.question}</p>
+                <div className="flex flex-wrap gap-2">
+                  {message.clarify.options.map((option) => (
+                    <button
+                      key={option.id}
+                      onClick={() => handleClarifySelect(option)}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors"
+                    >
+                      {option.label}
+                    </button>
+                  ))}
                 </div>
-              ) : (
-                <p className="text-left">{message.content}</p>
-              )}
-            </div>
+              </div>
+            ) : (
+              <div
+                className={`max-w-3xl px-4 py-3 rounded-2xl ${
+                  message.role === 'user'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-800 text-slate-100'
+                }`}
+              >
+                {message.role === 'assistant' ? (
+                  <div className="text-left">
+                    <MarkdownRenderer content={message.content || ''} />
+                    {message.isStreaming && <span className="streaming-cursor" />}
+                  </div>
+                ) : (
+                  <p className="text-left">{message.content}</p>
+                )}
+              </div>
+            )}
           </div>
         ))}
-
-        {isLoading && messages.length > 0 && messages[messages.length - 1].role === 'user' && (
-          <div className="flex justify-start">
-            <div className="bg-slate-800 px-4 py-3 rounded-2xl">
-              <div className="loading-dots">
-                <span />
-                <span />
-                <span />
-              </div>
-            </div>
-          </div>
-        )}
 
         {error && (
           <div className="flex justify-center">
