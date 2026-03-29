@@ -1,18 +1,17 @@
 {
-  "name": "agent-assistant-server",
+  "name": "rafa-agent-server",
   "version": "1.0.0",
-  "description": "Backend proxy server for AI API",
   "type": "module",
-  "main": "server.js",
+  "main": "src/index.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
   },
   "dependencies": {
-    "@tailwindcss/postcss": "^4.2.2",
+    "express": "^4.18.2",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "express-rate-limit": "^7.1.5"
+    "express-rate-limit": "^7.1.5",
+    "node-fetch": "^3.3.2"
   }
 }
