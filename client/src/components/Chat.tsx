@@ -1,6 +1,36 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MarkdownRenderer } from './MarkdownRenderer';
 
+// Debug log helper
+const debugLogs: Array<{ timestamp: string; type: string; data: any }> = [];
+
+function addDebugLog(type: string, data: any) {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    type,
+    data
+  };
+  debugLogs.push(entry);
+  console.log(`[${type}]`, data);
+
+  // Keep only last 100 entries
+  if (debugLogs.length > 100) {
+    debugLogs.shift();
+  }
+}
+
+// Export for debugging
+(window as any).getDebugLogs = () => debugLogs;
+(window as any).downloadDebugLogs = () => {
+  const blob = new Blob([JSON.stringify(debugLogs, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `chat-debug-${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
 // New types for agent protocol
 interface StatusEvent {
   type: string;
@@ -39,8 +69,10 @@ export const Chat: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentStatus, setCurrentStatus] = useState<StatusEvent | null>(null);
+  const [streamingContent, setStreamingContent] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const assistantMessageIdRef = useRef<string | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -52,22 +84,42 @@ export const Chat: React.FC = () => {
 
   const generateId = () => Math.random().toString(36).substring(2, 9);
 
-  // Parse SSE event line
-  const parseEvent = (line: string): { event: string; data: any } | null => {
-    const eventMatch = line.match(/^event: (\w+)$/);
-    const dataMatch = line.match(/^data: (.+)$/);
+  // Parse SSE events from stream chunk
+  const parseEvents = (chunk: string): Array<{ event: string; data: any }> => {
+    addDebugLog('parseEvents.input', { chunkLength: chunk.length, chunk: chunk.substring(0, 500) });
 
-    if (eventMatch && dataMatch) {
-      try {
-        return {
-          event: eventMatch[1],
-          data: JSON.parse(dataMatch[1])
-        };
-      } catch {
-        return { event: eventMatch[1], data: dataMatch[1] };
+    const events: Array<{ event: string; data: any }> = [];
+    const lines = chunk.split('\n');
+    let currentEvent: string | null = null;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        // Empty line indicates end of event, reset
+        currentEvent = null;
+        continue;
+      }
+
+      if (trimmed.startsWith('event:')) {
+        currentEvent = trimmed.substring(6).trim();
+      } else if (trimmed.startsWith('data:')) {
+        const dataStr = trimmed.substring(5).trim();
+        if (currentEvent) {
+          try {
+            const data = dataStr ? JSON.parse(dataStr) : {};
+            events.push({ event: currentEvent, data });
+            addDebugLog('parseEvents.parsed', { event: currentEvent, data });
+          } catch (e) {
+            events.push({ event: currentEvent, data: dataStr });
+            addDebugLog('parseEvents.parseError', { event: currentEvent, dataStr, error: (e as Error).message });
+          }
+          currentEvent = null;
+        }
       }
     }
-    return null;
+
+    addDebugLog('parseEvents.output', { eventCount: events.length, events: events.map(e => e.event) });
+    return events;
   };
 
   const handleSubmit = async (e: React.FormEvent, clarifyValue?: string) => {
@@ -113,42 +165,49 @@ export const Chat: React.FC = () => {
       if (!reader) throw new Error('No response body');
 
       const decoder = new TextDecoder();
-      let assistantMessageId: string | null = null;
-      let fullContent = '';
+      assistantMessageIdRef.current = null;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n').filter(line => line.trim() !== '');
+        const events = parseEvents(chunk);
 
-        for (const line of lines) {
-          const event = parseEvent(line);
-          if (!event) continue;
+        for (const { event, data } of events) {
+          addDebugLog('event.received', { event, data, streamingContentBefore: streamingContent });
 
-          switch (event.event) {
+          switch (event) {
             case 'status':
-              setCurrentStatus(event.data);
+              addDebugLog('event.status', data);
+              setCurrentStatus(data);
               break;
 
             case 'content':
-              if (!assistantMessageId) {
-                assistantMessageId = generateId();
+              addDebugLog('event.content.raw', { data, type: typeof data, hasContent: 'content' in data });
+              const contentText = data?.content || '';
+              addDebugLog('event.content.extracted', { contentText, length: contentText.length });
+              setStreamingContent(prev => {
+                const newContent = prev + contentText;
+                addDebugLog('streamingContent.updated', { prev: prev, added: contentText, new: newContent });
+                return newContent;
+              });
+              break;
+              // Also update messages array
+              if (!assistantMessageIdRef.current) {
+                assistantMessageIdRef.current = generateId();
                 setMessages(prev => [...prev, {
-                  id: assistantMessageId!,
+                  id: assistantMessageIdRef.current!,
                   role: 'assistant',
-                  content: '',
+                  content: contentText,
                   isStreaming: true,
                   timestamp: new Date(),
                 }]);
-              }
-              if (event.data.content) {
-                fullContent += event.data.content;
+              } else {
                 setMessages(prev =>
                   prev.map(m =>
-                    m.id === assistantMessageId
-                      ? { ...m, content: fullContent }
+                    m.id === assistantMessageIdRef.current
+                      ? { ...m, content: m.content + contentText }
                       : m
                   )
                 );
@@ -156,10 +215,11 @@ export const Chat: React.FC = () => {
               break;
 
             case 'clarify':
+              addDebugLog('event.clarify', data);
               setMessages(prev => [...prev, {
                 id: generateId(),
                 role: 'clarify',
-                clarify: event.data,
+                clarify: data,
                 timestamp: new Date(),
               }]);
               setIsLoading(false);
@@ -167,22 +227,29 @@ export const Chat: React.FC = () => {
               break;
 
             case 'error':
-              setError(event.data.error || '请求失败');
+              addDebugLog('event.error', data);
+              setError(data.error || '请求失败');
               break;
 
             case 'done':
-              if (assistantMessageId) {
+              addDebugLog('event.done', data);
+              if (assistantMessageIdRef.current) {
                 setMessages(prev =>
                   prev.map(m =>
-                    m.id === assistantMessageId
+                    m.id === assistantMessageIdRef.current
                       ? { ...m, isStreaming: false }
                       : m
                   )
                 );
+                assistantMessageIdRef.current = null;
               }
+              setStreamingContent('');
               setIsLoading(false);
               setCurrentStatus(null);
               break;
+
+            default:
+              addDebugLog('event.unknown', { event, data });
           }
         }
       }
@@ -241,6 +308,13 @@ export const Chat: React.FC = () => {
           className="px-4 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
         >
           清空对话
+        </button>
+        <button
+          onClick={() => (window as any).downloadDebugLogs?.()}
+          className="px-4 py-2 text-sm text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors ml-2"
+          title="下载调试日志"
+        >
+          📋 日志
         </button>
       </header>
 
@@ -324,6 +398,24 @@ export const Chat: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* Debug: Direct streaming display */}
+        {streamingContent && (
+          <div className="flex justify-start">
+            <div className="max-w-3xl px-4 py-3 rounded-2xl bg-slate-800 text-slate-100 border border-green-500">
+              <div className="text-xs text-green-400 mb-2">DEBUG: streamingContent</div>
+              <div className="text-left whitespace-pre-wrap">{streamingContent}</div>
+              {isLoading && <span className="streaming-cursor" />}
+            </div>
+          </div>
+        )}
+
+        {/* Debug: Show current streamingContent value */}
+        <div className="flex justify-center">
+          <div className="text-xs text-slate-500">
+            streamingContent length: {streamingContent.length}
+          </div>
+        </div>
 
         <div ref={messagesEndRef} />
       </div>

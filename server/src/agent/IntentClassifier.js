@@ -1,3 +1,5 @@
+import { appendLog } from '../utils/logger.js';
+
 /**
  * Intent Classifier - determines task complexity and required tools
  */
@@ -60,26 +62,66 @@ Respond with JSON only:`;
   async callLLM(prompt) {
     const { baseUrl, apiKey, model } = this.apiConfig;
 
-    const response = await fetch(`${baseUrl}/v1/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 500
-      })
-    });
+    appendLog('IntentClassifier', { action: 'callLLM.start', baseUrl, model });
 
-    if (!response.ok) {
-      throw new Error(`Classification failed: ${response.status}`);
+    try {
+      const response = await fetch(`${baseUrl}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 500
+        })
+      });
+
+      appendLog('IntentClassifier', { action: 'callLLM.response', status: response.status, statusText: response.statusText });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        appendLog('IntentClassifier', { action: 'callLLM.error', status: response.status, error: errorText });
+        throw new Error(`Classification failed: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      appendLog('IntentClassifier', { action: 'callLLM.data', dataKeys: Object.keys(data) });
+
+      // Try multiple response formats
+      let text = null;
+
+      if (data.content && Array.isArray(data.content)) {
+        // Find text type content (newer format)
+        const textContent = data.content.find(c => c.type === 'text');
+        if (textContent?.text) {
+          text = textContent.text;
+          appendLog('IntentClassifier', { action: 'callLLM.format', format: 'anthropic-v2' });
+        } else if (data.content[0]?.text) {
+          text = data.content[0].text;
+          appendLog('IntentClassifier', { action: 'callLLM.format', format: 'anthropic' });
+        }
+      } else if (data.choices && data.choices[0]?.message?.content) {
+        text = data.choices[0].message.content;
+        appendLog('IntentClassifier', { action: 'callLLM.format', format: 'openai' });
+      } else if (data.output?.text) {
+        text = data.output.text;
+        appendLog('IntentClassifier', { action: 'callLLM.format', format: 'dashscope' });
+      } else if (typeof data === 'string') {
+        text = data;
+        appendLog('IntentClassifier', { action: 'callLLM.format', format: 'string' });
+      } else {
+        appendLog('IntentClassifier', { action: 'callLLM.unknownFormat', data: JSON.stringify(data).substring(0, 500) });
+        text = JSON.stringify(data);
+      }
+
+      return text;
+    } catch (error) {
+      appendLog('IntentClassifier', { action: 'callLLM.exception', error: error.message, stack: error.stack });
+      throw error;
     }
-
-    const data = await response.json();
-    return data.content[0].text;
   }
 
   parseClassification(text, originalMessage) {

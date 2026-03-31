@@ -1,45 +1,73 @@
-# Agent Assistant
+# Rafa Agent 🤖
 
-AI Agent 智能助手，支持流式输出和 Markdown 渲染。
+基于 React + Node.js 的 AI 智能助手，支持流式输出和 Agent 工作流。
 
-## 功能特点
+## ✨ 功能特点
 
-- 🤖 支持多种 AI API（Anthropic/阿里云 DashScope、OpenAI）
-- ⚡ 流式输出，实时显示回答
-- 📝 Markdown 渲染，支持代码高亮
-- 🎨 现代化深色主题 UI
-- 📱 响应式设计
-- 🔒 后端代理，保护 API Key
+- 🤖 **多 LLM 支持**: Anthropic / 阿里云 DashScope / OpenAI 兼容格式
+- ⚡ **流式输出**: SSE 实时推送，打字机效果
+- 🧠 **Agent 架构**: 意图分类 → 任务规划 → 工具执行 → 生成回复
+- 🔍 **搜索集成**: 支持 Tavily / Serper / DuckDuckGo 搜索
+- 💬 **智能澄清**: 当意图不明时，主动询问用户确认
+- 📝 **Markdown 渲染**: 代码块、表格、列表完整支持
+- 🎨 **深色主题**: 现代化 UI 设计
 
-## 技术栈
+## 🏗️ 架构
 
-- **前端**: React + TypeScript + Vite + Tailwind CSS
-- **后端**: Node.js + Express
-- **AI**: Anthropic API / 阿里云 DashScope（兼容 OpenAI 格式）
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Client    │────▶│   Server    │────▶│  LLM API    │
+│  (React)    │◄────│  (Express)  │◄────│(Anthropic)  │
+└─────────────┘     └─────────────┘     └─────────────┘
+                           │
+                    ┌──────┴──────┐
+                    │   Agent Core   │
+                    │ - Intent       │
+                    │ - Task Planner │
+                    │ - Tool Registry│
+                    └───────────────┘
+```
 
-## 快速开始
+## 🚀 快速开始
 
-### 安装依赖
+### 环境要求
+
+- Node.js 18+
+- API Key (Anthropic / 阿里云 DashScope)
+
+### 安装
 
 ```bash
-# 根目录安装
+# 克隆仓库
+git clone https://github.com/Rockelbel/rafa-agent.git
+cd rafa-agent
+
+# 安装依赖
 npm run install:all
 ```
 
-### 配置 API
+### 配置
 
-编辑 `server/.env`：
+编辑 `server/.env`:
 
 ```env
-# 使用阿里云 DashScope
-API_TYPE=anthropic
-ANTHROPIC_AUTH_TOKEN=your-token
+# 使用阿里云 DashScope (推荐)
+ANTHROPIC_AUTH_TOKEN=your-dashscope-api-key
 ANTHROPIC_MODEL=kimi-k2.5
+
+# 或使用 OpenAI
+# OPENAI_API_KEY=your-key
+# OPENAI_MODEL=gpt-4
+
+# 搜索 API (可选)
+TAVILY_API_KEY=your-key
+SERPER_API_KEY=your-key
 ```
 
-### 启动开发环境
+### 开发模式
 
 ```bash
+# 同时启动前后端
 npm run dev
 ```
 
@@ -52,16 +80,20 @@ npm run dev
 # 构建前端
 npm run build
 
-# 启动生产服务器
+# 启动服务器
 cd server && npm start
 ```
 
-## API 端点
+访问 http://localhost:3001/agent
 
-- `GET /api/health` - 健康检查
-- `GET /api/config` - 获取当前 API 配置
-- `POST /api/chat` - 流式对话
+## 🔌 API 端点
 
-## 部署
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/health` | 健康检查 |
+| POST | `/api/chat` | 流式对话 (SSE) |
+| GET | `/api/debug/logs` | 调试日志 |
 
-项目已配置 nginx 反向代理，访问路径：`/agent`
+## 📝 License
+
+MIT

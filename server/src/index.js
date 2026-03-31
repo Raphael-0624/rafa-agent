@@ -6,6 +6,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import rateLimit from 'express-rate-limit';
+import path from 'path';
 import chatRoutes from './routes/chat.js';
 
 // Load environment variables
@@ -26,8 +27,17 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
-// Routes
+// API Routes
 app.use('/api', chatRoutes);
+
+// Serve static files from client dist
+const clientDistPath = path.resolve(process.cwd(), '../client/dist');
+app.use('/agent', express.static(clientDistPath));
+
+// Fallback for SPA
+app.get('/agent/*', (req, res) => {
+  res.sendFile(path.join(clientDistPath, 'index.html'));
+});
 
 // Error handling
 app.use((err, req, res, next) => {

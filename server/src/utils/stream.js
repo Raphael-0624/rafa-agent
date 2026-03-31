@@ -2,6 +2,8 @@
  * SSE Stream utilities for sending events to client
  */
 
+import { appendLog } from './logger.js';
+
 export function createSSEStream(res) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -16,7 +18,9 @@ export function createSSEStream(res) {
      */
     sendStatus(type, message, extra = {}) {
       const data = JSON.stringify({ type, message, ...extra });
-      res.write(`event: status\ndata: ${data}\n\n`);
+      const event = `event: status\ndata: ${data}\n\n`;
+      appendLog('SSE', { event: 'status', type, message, ...extra });
+      res.write(event);
     },
 
     /**
@@ -25,7 +29,9 @@ export function createSSEStream(res) {
      */
     sendContent(content) {
       const data = JSON.stringify({ content });
-      res.write(`event: content\ndata: ${data}\n\n`);
+      const event = `event: content\ndata: ${data}\n\n`;
+      appendLog('SSE', { event: 'content', contentLength: content?.length || 0, contentPreview: content?.substring(0, 100) });
+      res.write(event);
     },
 
     /**
@@ -34,13 +40,16 @@ export function createSSEStream(res) {
      */
     sendClarify(clarify) {
       const data = JSON.stringify(clarify);
-      res.write(`event: clarify\ndata: ${data}\n\n`);
+      const event = `event: clarify\ndata: ${data}\n\n`;
+      appendLog('SSE', { event: 'clarify', clarify });
+      res.write(event);
     },
 
     /**
      * Send done event
      */
     sendDone() {
+      appendLog('SSE', { event: 'done' });
       res.write('event: done\ndata: {}\n\n');
     },
 
@@ -50,6 +59,7 @@ export function createSSEStream(res) {
      */
     sendError(error) {
       const data = JSON.stringify({ error });
+      appendLog('SSE', { event: 'error', error });
       res.write(`event: error\ndata: ${data}\n\n`);
     },
 
